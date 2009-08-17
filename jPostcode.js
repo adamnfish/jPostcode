@@ -68,7 +68,7 @@
 				invalid:	"Please enter a valid postcode",
 				ajax:		"There was an error contacting the postcode lookup software"
 			},
-			postcodeFormat:	false,
+			postcodeFormat:	/[A-Z]{1,2}[0-9]{1,2}[A-Z]?\s*[0-9][ABDEFGHJLNPQRSTUWXYZ]{1,2}/i,
 			addressKey:		"address",
 			addressesKey:	"addresses",
 			idKey:			"id",
@@ -89,12 +89,25 @@
 		var	options 		= {},
 			postcode		= "",
 			select			= false,
-			postcodeCache	= {};
-			addressCache	= {};
+			postcodeCache	= {},
+			addressCache	= {},
+			blurTimer		= false;
+		
+		// function references
+		var	getAddresses,
+			getAddress,
+			selectAddress,
+			reset,
+			onSuccessAddresses,
+			error,
+			onSuccessAddress,
+			populate,
+			init;
+			
 	
 		// init function is called when the document has loaded so the elements are available to JavaScript
 		// creates elements and binds events
-		var init = function(id, opts) {
+		init = function(id, opts) {
 			// over-write default options with user-defined ones
 			options = $.extend({}, defaults, opts);
 			
@@ -159,7 +172,16 @@
 						reset();
 						break;
 				}
+			}).blur(function(){
+				blurTimer = setTimeout(select.hide, 100);
+			}).focus(function(){
+				clearTimeout(blurTimer);
 			});
+			
+			// override with error option
+			if(empty !== options.error){
+				error = options.error;
+			}
 			
 			// create an error container if there isn't one specified
 			if(!options.errornode){
@@ -182,14 +204,14 @@
 			select = $.Autocompleter.Select(options, field[0], selectAddress, {mouseDownOnSelect: false});
 		};
 		
-		var getAddresses = function() {
+		getAddresses = function() {
 			// reset select box
 			reset();
 			// get postcode
 			var value = field.val().toLowerCase().replace(/\s/g, "");
 			if(value && value !== '') {
 				// test postcode if a pattern is provided
-				if(typeof(options.postcodeFormat) != "regexp" || options.postcodeFormat.test(value)){
+				if(typeof(options.postcodeFormat.test) != "function" || options.postcodeFormat.test(value)){
 					// read from the postcodeCache if an entry exists
 					postcode = value;
 					if(postcodeCache[postcode]){
@@ -204,19 +226,19 @@
 							error: function(){
 								options.onAddressesFail(arguments);
 								options.onLoaded();
-								error(options.errors.ajax);
+								error(options.errors.ajax, field, options.errornode);
 							}
 						});
 					}
 				} else{
-					error(options.errors.invalid);
+					error(options.errors.invalid, field, options.errornode);
 				}
 			} else {
-				error(options.errors.empty);
+				error(options.errors.empty, field, options.errornode);
 			}
 		};
 		
-		var getAddress = function(pcaid) {
+		getAddress = function(pcaid) {
 			if(addressCache[pcaid]){
 				onSuccessAddress(addressCache[pcaid]);
 			} else{
@@ -228,41 +250,43 @@
 					error: function(){
 						options.onAddressFail(arguments);
 						options.onLoaded();
-						error(options.errors.ajax);
+						error(options.errors.ajax, field, options.errornode);
 					}
 				});
 			}
 		};
 		
-		var onSuccessAddresses = function(json) {
+		onSuccessAddresses = function(json) {
 			options.onLoaded();
 			options.onAddresses();
-			if(!json || !json[options.addressesKey].length){
-				error(options.errors.noneFound);
-				return;
+			if(json.error_number){
+				error(json.message, field, options.errornode);
+			} else if(!json || !json[options.addressesKey].length){
+				error(options.errors.noneFound, field, options.errornode);
+			} else{
+				var addresslist = [];
+				var addresses = json[options.addressesKey];
+				$.each(addresses, function(i, a){
+					addresslist.push({data: [a[options.descriptionKey], a[options.idKey]]});
+				});
+				// display the results
+				select.display(addresslist, postcode);
+				select.show();
+				// postcodeCache the results
+				postcodeCache[postcode] = json;
 			}
-			var addresslist = [];
-			var addresses = json[options.addressesKey];
-			$.each(addresses, function(i, a){
-				addresslist.push({data: [a[options.descriptionKey], a[options.idKey]]});
-			});
-			// display the results
-			select.display(addresslist, postcode);
-			select.show();
-			// postcodeCache the results
-			postcodeCache[postcode] = json;
 		};
 		
-		var onSuccessAddress = function(json) {
+		onSuccessAddress = function(json) {
 			options.onAddress();
 			options.onLoaded();
 			populate(json[options.addressKey][0]);
-			if(json[options.addressKey][0].id){
-				addressCache[json[options.addressKey][0].id] = json;
+			if(json[options.addressKey][0][options.idKey]){
+				addressCache[json[options.addressKey][0][options.idKey]] = json;
 			}
 		};
 		
-		var selectAddress = function() {
+		selectAddress = function() {
 		    var selected = select.selected();
 		    if(selected && selected.data){
 			    getAddress(selected.data[1]);
@@ -270,7 +294,7 @@
 		    }
 		};
 				
-		var populate = function(json){
+		populate = function(json){
 			options.onPopulate(json);
 			// tries valiantly to populate form fields from the returned data
 			if(typeof(options.fieldMap) == "function"){
@@ -293,29 +317,22 @@
 					}
 					
 					var target = $("[name=" + name + "]");
-					if(target.length && target.attr("tagName") == "INPUT" || target.attr("tagName") == "SELECT" || target.attr("tagName") == "TEXTAREA"){
+					if(target.length && (target.attr("tagName") == "INPUT" || target.attr("tagName") == "SELECT" || target.attr("tagName") == "TEXTAREA")){
 						target.val(prop);
 					}
 				});
 			}
 		};
 		
-		var reset = function(){
+		reset = function(){
 			select.hide();
 			select.emptyList();
 		};
 		
-		var error = function(message, fade){
-			if(options.error !== empty){
-				options.error();
-			} else{
-				fade = fade || true;
-				options.errornode.stop(true).text(message).show().fadeTo(50, 1, function(){
-					if(fade){
-						options.errornode.fadeOut(2000);
-					}
-				});
-			}
+		error = function(message, field, errornode){
+			options.errornode.stop(true).text(message).show().fadeTo(50, 1, function(){
+				options.errornode.fadeOut(2000);
+			});
 		};
 	
 		// everything is defined, call the init method when the document is ready (or immediately, more likely)
@@ -417,7 +434,7 @@
 	                list.scrollTop(offset);
 	            }
 	        }
-		};
+		}
 
 		function movePosition(step) {
 			active += step;
