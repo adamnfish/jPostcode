@@ -82,7 +82,11 @@
 			onLoading:			empty,	// called whenever the plugin is in a 'loading' state
 			onLoaded:			empty,	// called when the plugin stops loading (fail or success)
 			onPopulate:			empty,	// fired when population happens (when user selects an address)
-			error:				empty	// optionally override the internal error function
+			afterPopulate:		empty,	// fired after population happens (fields are set to their new values)
+			error:				empty,	// optionally override the internal error function
+			
+			// misc
+			errorFadeTime:		4000
 		};
 		
 		// additional variables available in the plugin scope
@@ -91,7 +95,8 @@
 			select			= false,
 			postcodeCache	= {},
 			addressCache	= {},
-			blurTimer		= false;
+			blurTimer		= false,
+			config			= {mouseDownOnSelect: false};
 		
 		// function references
 		var	getAddresses,
@@ -128,7 +133,7 @@
 							select.next();
 							event.preventDefault();
 						} else{
-							if(postcodeCache[$(field).val().toLowerCase()]){
+							if(postcodeCache[$(field).val().toLowerCase().replace(/\s/g, "")]){
 								getAddresses();
 							}
 						}
@@ -173,7 +178,13 @@
 						break;
 				}
 			}).blur(function(){
-				blurTimer = setTimeout(select.hide, 100);
+				clearTimeout(blurTimer);
+				if(!config.mouseDownOnSelect){
+					blurTimer = setTimeout(select.hide, 100);
+				} else{
+					var field = this;
+					blurTimer = setTimeout(function(){field.focus()}, 25);
+				}
 			}).focus(function(){
 				clearTimeout(blurTimer);
 			});
@@ -199,9 +210,9 @@
 				field.focus();
 				getAddresses();
 			});
-
+			
 			// create the select plugin instance
-			select = $.Autocompleter.Select(options, field[0], selectAddress, {mouseDownOnSelect: false});
+			select = $.Autocompleter.Select(options, field[0], selectAddress, config);
 		};
 		
 		getAddresses = function() {
@@ -322,6 +333,7 @@
 					}
 				});
 			}
+			options.afterPopulate();
 		};
 		
 		reset = function(){
@@ -331,7 +343,7 @@
 		
 		error = function(message, field, errornode){
 			options.errornode.stop(true).text(message).show().fadeTo(50, 1, function(){
-				options.errornode.fadeOut(2000);
+				options.errornode.fadeOut(options.errorFadeTime);
 			});
 		};
 	
@@ -343,15 +355,15 @@
 		return {
 			hide: select.hide,
 			clear: reset,
-			error: error
+			error: error,
+			show: getAddresses
 		};
 	};
 	
 	// add jPostcode to the jQuery element
 	$.fn.extend({
 		jPostcode: function(options){
-			jPostcode(this, options);
-			return this;
+			return jPostcode(this, options);
 		}
 	});
 	
@@ -388,10 +400,11 @@
 
 			list = $("<ul/>").appendTo(element).mouseover( function(event) {
 				if(target(event).nodeName && target(event).nodeName.toUpperCase() == 'LI') {
-		            active = $(list).children().removeClass(CLASSES.ACTIVE).index(target(event));
+		            active = $("li", list).removeClass(CLASSES.ACTIVE).index(target(event));
 				    $(target(event)).addClass(CLASSES.ACTIVE);            
 		        }
 			}).click(function(event) {
+				event.preventDefault();
 				$(target(event)).addClass(CLASSES.ACTIVE);
 				select();
 				// TODO provide option to avoid setting focus again after selection? useful for cleanup-on-focus
@@ -434,7 +447,7 @@
 	                list.scrollTop(offset);
 	            }
 	        }
-		}
+		};
 
 		function movePosition(step) {
 			active += step;
@@ -463,7 +476,7 @@
 				var li = $("<li/>").html( options.highlight(formatted, term) ).addClass(i%2 == 0 ? "ac_even" : "ac_odd").appendTo(list)[0];
 				$.data(li, "ac_data", data[i]);
 			}
-			listItems = list.children();
+			listItems = list.find("li");
 			if ( options.selectFirst ) {
 				listItems.slice(0, 1).addClass(CLASSES.ACTIVE);
 				active = 0;
